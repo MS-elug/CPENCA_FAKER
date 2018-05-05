@@ -1,0 +1,306 @@
+'*******************************************************************************
+'
+'   PIC 16F1828
+'   Horloge interne (INTOSC I/O)
+'   Frequence 16 MHz
+'   CONFIG PROJECT => MCLRE OFF
+'   Mode programmation : Master clear = Disabled
+'
+' ******************************************************************************
+'   Programme pour PIC 16F1828 ? 16MHz avec LCD
+'
+'*******************************************************************************
+'
+'   Date de revision :
+'
+'*******************************************************************************
+'
+'
+'*******************************************************************************
+
+program CPENCA_Faker
+
+
+#DEFINE PIC18F25k50
+#DEFINE WITH_INERTIA
+#DEFINE WITH_DIFFERENTIAL
+
+#IFDEF PIC18F25k50 THEN
+symbol ENC_A_P = PORTB.0
+symbol ENC_A_M = PORTB.1
+symbol ENC_B_P = PORTB.2
+symbol ENC_B_M = PORTB.3
+symbol ENC_Z_P = PORTB.3
+symbol ENC_Z_M = PORTB.4
+symbol INPUT_VOLT = PORTA.3
+symbol LED_STATUS = PORTA.5
+#ENDIF
+
+#IFDEF PIC18F25k22 THEN
+
+#ENDIF
+
+dim VOLTAGE_TARGET as word
+#IFDEF WITH_INERTIA
+dim VOLTAGE_TARGET_M1 as word
+dim VOLTAGE_TARGET_M2 as word
+dim VOLTAGE_TARGET_M3 as word
+#ENDIF
+dim VOLTAGE as word
+
+'*******************************************************************************
+'
+'  CODE GENERE depuis https://jsbin.com/jasazaf/edit?js,output
+'
+'*******************************************************************************
+
+'--- Config---
+' freq=64000000hz
+' cpr=4000pulse/tr
+' Kv=300rpm/V
+' adcPrecision=511
+'--- Info  ---
+' 1 cycle = 62.5 ns
+' 1V = 20000 pulse/s
+' 1V = 800 cycle/pulse
+
+
+'--- Code g?n?r?---
+' ENCODER CPR = nbr de pulse par tour d'encoder
+const ENCODER_CPR as word = 4000
+' CYCLE_MAPPING = 10 * nbr de cycle necessaire pour un quart de pulse
+const CYCLE_MAPPING as word[256] = (1535,1022,511,340,255,204,170,146,127,113,102,92,85,78,73,68,63,60,56,53,51,48,46,44,42,40,39,37,36,35,34,32,31,30,30,29,28,27,26,26,25,24,24,23,23,22,22,21,21,20,20,20,19,19,18,18,18,17,17,17,17,16,16,16,15,15,15,15,15,14,14,14,14,14,13,13,13,13,13,12,12,12,12,12,12,12,11,11,11,11,11,11,11,10,10,10,10,10,10,10,10,10,10,9,9,9,9,9,9,9,9,9,9,9,8,8,8,8,8,8,8,8,8,8,8,8,8,8,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4)
+
+
+'*******************************************************************************
+'
+'  PROCEDURE INTERRUPTION
+'
+'*******************************************************************************
+dim ENCODER_IN_MOTION as boolean
+dim CLOCK_ROTATION as boolean
+dim QUARTER_PERIOD_LOW as byte
+dim QUARTER_PERIOD_HIGH as byte
+
+dim NBR_CYCLE_H as byte
+dim NBR_CYCLE_L as byte
+
+sub procedure interrupt
+  dim NBR_CYCLE as word
+
+  if INTCON.TMR0IF = 1 then
+     ' interruption sur timer0 overflow
+
+     ' Clean interruption flag
+     INTCON.TMR0IF = 0
+     ' Desactive timer 0 interruption
+     INTCON.TMR0IE=0
+     ' START ADC conversion qui va declencer une interruption
+     ADCON0.1=1
+  end if
+
+  if PIR1.ADIF = 1 then
+     ' interruption sur ADC convertion
+
+     ' Sauvegarde la valeur du voltage (sur 9bits uniquement)
+     VOLTAGE_TARGET=ADRESH<<1 + ADRESL>>7
+     #IFDEF WITH_INERTIA
+        '   VOLTAGE = VOLTAGE_TARGET_M3/2 + VOLTAGE_TARGET_M2/4 + VOLTAGE_TARGET_M1/8 + VOLTAGE_TARGET/8
+        ''VOLTAGE = ((VOLTAGE_TARGET_M3>>1) + (VOLTAGE_TARGET_M2>>2)) + ((VOLTAGE_TARGET_M1>>3) + (VOLTAGE_TARGET>>3))
+        'Propagate delays
+        ''VOLTAGE_TARGET_M3=VOLTAGE_TARGET_M2
+        ''VOLTAGE_TARGET_M2=VOLTAGE_TARGET_M1
+        'VOLTAGE_TARGET_M1=VOLTAGE_TARGET
+
+        VOLTAGE = VOLTAGE>>1 + VOLTAGE_TARGET>>1
+
+     #ELSE
+        VOLTAGE = VOLTAGE_TARGET
+     #ENDIF
+
+      ENCODER_IN_MOTION=true
+      if VOLTAGE > 512 then
+          CLOCK_ROTATION=true
+          NBR_CYCLE = CYCLE_MAPPING[VOLTAGE-511]
+      else
+          if VOLTAGE < 512 then
+             CLOCK_ROTATION=false
+             NBR_CYCLE = CYCLE_MAPPING[511-VOLTAGE]
+          else
+             ENCODER_IN_MOTION=false
+          end if
+      end if
+
+      NBR_CYCLE_H = NBR_CYCLE >> 8
+      NBR_CYCLE_L = NBR_CYCLE
+
+     ' Clean interruption flag
+     PIR1.ADIF = 0
+     ' Prepare timer0 interruption
+     TMR0L=0
+     ' Enable timer 0 interruption to trigger ADC conversion later
+     INTCON.TMR0IE=1
+  end if
+end sub
+
+'*******************************************************************************
+'
+'  PROCEDURES
+'
+'*******************************************************************************
+
+' Procedure pour attendre une grande valeur de cycle
+sub procedure wait(dim high as byte,dim low as byte)
+   dim k as integer
+   if high>0 then
+     k = 0
+     while k < high
+      Delay_Cyc(0xFF)
+      Inc(k)
+     wend
+   end if
+   if low>0 then
+      Delay_Cyc(low)
+   end if
+end sub
+
+
+'*******************************************************************************
+'
+'  PROGRAMME PRINCIPAL
+'
+'*******************************************************************************
+main:
+  dim POSITION_COUNTER as integer
+
+
+   TRISA = %00001000                   ' A3 en input
+   PORTA = %00000000                   ' initialize Port A
+   TRISB = %00000000                   ' B en sortie
+   PORTB = %00000000                   ' initialize Port B
+   TRISC = %00000000                   ' C3 en input
+   PORTC = %00000000                   ' initialize Port C
+
+#IFDEF PIC18F25k50 THEN
+   OSCCON = %01110010                 ' 16Mhz internal
+   ADCON0 =  %00001101                ' Configure AN7 in analog mode
+   ADCON1 =  %00000000                ' VREF- is connected to VSS
+                                      ' VREF+ is connected to VDD
+   ADCON2 =  %00100101                ' Conversion clock set to FOSC/32
+#ENDIF
+
+   CM1CON0.7=0                        ' comparateurs arr?t?s
+   CM2CON0.7=0                        ' comparateurs arr?t?s
+
+   ' Configure l'interruption sur Timer0
+   INTCON.TMR0IE=0                      'Desactive l'interruption sur timer0 (elle est activee plus tard)
+   OSCCON.TMR0ON = 1 'Enable time0
+   OSCCON.T08BIT = 1 'Configure as 8bit counter
+   OSCCON.T0CS = 0                'T0CS: TMR0 Clock Source Select bit| 0 = Internal instruction cycle clock (FOSC/4)
+   OSCCON.PSA = 0
+   OSCCON.T0PS2 = 1                 'Prescaler Rate Select bits
+   OSCCON.T0PS1 = 1                 'Active un prescale 1/128 pour le timer0 afin d'augmenter la periode
+   OSCCON.T0PS0 = 0
+
+   ' Configure l'interruption sur ADC
+   INTCON.PEIE = 1                    ' Enable peripheral interrupt
+   PIE1.ADIE = 1                       'Enable ADC Interrupt
+
+   ' Fait clignoter la LED de status
+   LED_STATUS = 1
+   delay_ms(100)
+   LED_STATUS = 0
+   delay_ms(100)
+   LED_STATUS = 1
+   delay_ms(100)
+   LED_STATUS = 0
+   delay_ms(400)
+
+   LED_STATUS = 1
+   delay_ms(100)
+   LED_STATUS = 0
+   delay_ms(100)
+   LED_STATUS = 1
+   delay_ms(100)
+   LED_STATUS = 0
+   delay_ms(400)
+
+   ' INIT variables
+   POSITION_COUNTER=0
+   CLOCK_ROTATION=true
+   ENCODER_IN_MOTION=false
+   LATA=%00101010
+   VOLTAGE=256              ' START with a 0V voltage
+
+   ' La valeur de tension de commande est r?cup?r?e de mani?re asynchrone
+   ' par l'association du timer0 et de la mesure ADC en interruption.
+   INTCON.GIE = 1 ' Enable global interrupt
+   ADCON0.1=1 ' START a ADC conversion
+
+   while TRUE
+     IF ENCODER_IN_MOTION=true then
+        ' Recupere le nombre de cycle associe a la tension de consigne actuelle
+        IF CLOCK_ROTATION = true then
+           ' Calcule la nouvelle position ( -ENCODER_CPR<POSITION_COUNTER<ENCODER_CPR)
+           ' pour envoyer un signal de tour quand ENCODER_CPR=0
+           Inc(POSITION_COUNTER)
+           if POSITION_COUNTER = ENCODER_CPR then
+             POSITION_COUNTER = 0
+           end if
+
+          ' SENS HORAIRE
+          ' AP----____
+          ' AM____----
+          ' BP__----__
+          ' BM--____--
+          LATA=%00101001
+          wait(NBR_CYCLE_H,NBR_CYCLE_L)
+
+          if POSITION_COUNTER = 0 then
+             LATA=%00010101
+          else
+             LATA=%00100101
+          end if
+          wait(NBR_CYCLE_H,NBR_CYCLE_L)
+
+          LATA=%00100110
+          wait(NBR_CYCLE_H,NBR_CYCLE_L)
+
+          LATA=%00101010
+          wait(NBR_CYCLE_H,NBR_CYCLE_L)
+       else
+          ' Calcule la nouvelle position ( -ENCODER_CPR<POSITION_COUNTER<ENCODER_CPR)
+          ' pour envoyer un signal de tour quand ENCODER_CPR=0
+          Dec(POSITION_COUNTER)
+          if POSITION_COUNTER = -ENCODER_CPR then
+              POSITION_COUNTER = 0
+           end if
+
+          ' SENS ANTIHORAIRE
+          ' AP__----__
+          ' AM--____--
+          ' BP----____
+          ' BM____----
+          LATA=%00100110
+          wait(NBR_CYCLE_H,NBR_CYCLE_L)
+
+          if POSITION_COUNTER = 0 then
+             LATA=%00010101
+          else
+              LATA=%00100101
+          end if
+          wait(NBR_CYCLE_H,NBR_CYCLE_L)
+
+          LATA=%00101001
+          wait(NBR_CYCLE_H,NBR_CYCLE_L)
+
+          LATA=%00101010
+          wait(NBR_CYCLE_H,NBR_CYCLE_L)
+       end if
+     else
+         ' Etant dans une zone morte, on ne genere aucun pulse
+         ' on attend juste qq cycle avant de recommencer la boucle
+         Delay_Cyc(0x10)
+     end if
+   wend
+end.

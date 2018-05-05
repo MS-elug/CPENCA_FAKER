@@ -1,0 +1,12 @@
+*.asm
+*.bmk
+*.brk
+*.dbg
+*.dct
+*.dlt
+*.hex
+*.log
+*.lst
+*.mbpi_*
+*.mcl
+*.user.dic
