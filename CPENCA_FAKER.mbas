@@ -1,20 +1,46 @@
 '*******************************************************************************
 '
-'   PIC 16F1828
-'   Horloge interne (INTOSC I/O)
-'   Frequence 16 MHz
-'   CONFIG PROJECT => MCLRE OFF
-'   Mode programmation : Master clear = Disabled
+'   PIC 18F25K22
+'   Quartz 16 MHz + PLL X4  => 64.0000 MHz
+'
+'*******************************************************************************
+'
+'   Simulateur d'un encodeur moteur en fonction d'une tension de commande -10V / +10V
+'
+'*******************************************************************************
+'
+'   Date de revision :  06/05/2018
 '
 ' ******************************************************************************
-'   Programme pour PIC 16F1828 à 16MHz avec LCD
 '
-'*******************************************************************************
+'   A0 => Entree analogique AN0
+'   A1 => NC
+'   A2 => NC
+'   A3 => NC
+'   A4 => NC
+'   A5 => NC
+'   A6 => Quartz 16MHz
+'   A7 => Quartz 16MHz
 '
-'   Date de revision :
+'   B0 => Sortie A+
+'   B1 => Sortie B+
+'   B2 => Sortie Z+
+'   B3 => Sortie A-
+'   B4 => Sortie B-
+'   B5 => Sortie Z-
+'   B6 => Prog
+'   B7 => Prog
 '
-'*******************************************************************************
+'   C0 => NC
+'   C1 => NC
+'   C2 => NC
+'   C3 => Sortie Start Stepper
+'   C4 => Led bicolore
+'   C5 => NC
+'   C6 => Led bicolore
+'   C7 => NC
 '
+'   E3 => Prog
 '
 '*******************************************************************************
 
@@ -26,18 +52,27 @@ program CPENCA_Faker
 #DEFINE ADC_16BITS
 
 #IFDEF PIC18F25k50 THEN
-symbol ENC_A_P = PORTB.0
-symbol ENC_A_M = PORTB.1
-symbol ENC_B_P = PORTB.2
-symbol ENC_B_M = PORTB.3
-symbol ENC_Z_P = PORTB.3
-symbol ENC_Z_M = PORTB.4
-symbol INPUT_VOLT = PORTA.3
-symbol LED_STATUS = PORTA.5
+symbol ENC_A_P = LATB.0
+symbol ENC_A_M = LATB.1
+symbol ENC_B_P = LATB.2
+symbol ENC_B_M = LATB.3
+symbol ENC_Z_P = LATB.3
+symbol ENC_Z_M = LATB.4
+symbol INPUT_VOLT = LATB.3
+symbol LED_C = LATB.5
+symbol LED_A = LATB.6
 #ENDIF
 
 #IFDEF PIC18F25k22 THEN
-
+symbol ENC_A_P = LATB.0
+symbol ENC_A_M = LATB.3
+symbol ENC_B_P = LATB.1
+symbol ENC_B_M = LATB.4
+symbol ENC_Z_P = LATB.2
+symbol ENC_Z_M = LATB.5
+symbol INPUT_VOLT = PORTA.0
+symbol LED_C = LATC.4
+symbol LED_A = LATC.6
 #ENDIF
 
 
@@ -171,18 +206,27 @@ end sub
 '
 '*******************************************************************************
 main:
-   TRISA = %00001000
-   TRISA.B3 = 1                        ' A3 en input
-   TRISB = %00000000                   ' B en sortie
-   TRISC = %00000000                   ' C3 en input
+   dim i as word
+   
+   TRISA = 0x00
+   TRISA.B0 = 1                        ' A0 en input
+   TRISA.B7 = 1                        ' A7 en input
 
-   PORTA = %00000000                   ' initialize Port A
-   PORTB = %00000000                   ' initialize Port B
-   PORTC = %00000000                   ' initialize Port C
+   TRISB = 0x00                   ' B en sortie
+   TRISC = 0x00                   ' C3 en input
+
+   PORTA = 0x00                   ' initialize Port A
+   PORTB = 0x00                   ' initialize Port B
+   PORTC = 0x00                   ' initialize Port C
+#IFDEF PIC18F25k22 THEN
+   TRISE = 0x00
+   TRISE.B3 = 1                                  ' E3 en entrée
+   PORTE = 0x00                                     ' initialize port E
+#ENDIF
 
 #IFDEF PIC18F25k50 THEN
    ' -----------------------------------------------------------
-   ' Use 16Mhz internal clock with PLL4x to get 48Mhz clock
+   ' Use 16Mhz internal clock with PLL3x to get 48Mhz clock
    ' CONFIG1L : 0x0023
    ' CONFIG1H : 0x0008
    OSCCON = 0x00                 ' Oscillator control register
@@ -194,32 +238,83 @@ main:
    
    ' -----------------------------------------------------------
    ' Initialize A/D module
+   ANSELA = 0x00
+   ANSELA.B0=1                        ' A0 en entrée analogique
+   ANSELB = 0x00                      ' aucune entrée analogique en B
+   ANSELC = 0x00                      ' aucune entrée analogique en C
+   
    ADCON0 = 0x00                      ' A/D Control register 0
    ADCON0.B6 = 0                      ' Analog channel set to AN3
    ADCON0.B5 = 0
    ADCON0.B4 = 0
    ADCON0.B3 = 1
    ADCON0.B2 = 1
-   ADCON0.ADON = 1                    ' Enbale ADC
+   ADCON0.ADON = 1                    ' Enable ADC
    
    ADCON1 = 0x00                      ' A/D Control register 1
-   ADCON1.PVCFG1 = 0                  ' Vref+ connected to AVDD
+   ADCON1.PVCFG1 = 0                  ' Vref+ connected to AVdd
    ADCON1.PVCFG0 = 0
-   ADCON1.NVCFG1 = 0                  ' Vref- connected to AVSS
+   ADCON1.NVCFG1 = 0                  ' Vref- connected to AVss
    ADCON1.NVCFG0 = 0
 
    ADCON2 = 0x00                      ' A/D Control register 2
-   ADCON2.ADFM = 0                    ' Right alignement
+   ADCON2.ADFM = 0                    ' Results format 0 = Left alignement
    ADCON2.ACQT2 = 1                   ' Acquisition time = 8 TAD
    ADCON2.ACQT1 = 0
    ADCON2.ACQT0 = 0
    ADCON2.ADCS2 = 0                   ' Conversion clock = Frc
    ADCON2.ADCS1 = 1
    ADCON2.ADCS0 = 1
-#ENDIF
-
+   
    CM1CON0.7=0                        ' comparateurs arrétés
    CM2CON0.7=0                        ' comparateurs arrétés
+#ENDIF
+
+#IFDEF PIC18F25k22 THEN
+   ' -----------------------------------------------------------
+   ' Use 16Mhz internal clock with PLL4x to get 64Mhz clock
+   ' CONFIG1H : 0x0038
+   OSCCON = 0x00                 ' Oscillator control register
+   OSCCON.IRCF2 = 1                   ' Internal RC Oscillator freq HFINTOSC 16Mhz
+   OSCCON.IRCF1 = 1
+   OSCCON.IRCF0 = 1
+   OSCCON.SCS1 = 0                    ' System clock set to primary clock
+   OSCCON.SCS0 = 0
+   
+   ' -----------------------------------------------------------
+   ' Initialize A/D module
+   ANSELA = 0x00
+   ANSELA.B0=1                        ' A0 en entrée analogique
+   ANSELB = 0x00                      ' aucune entrée analogique en B
+   ANSELC = 0x00                      ' aucune entrée analogique en C
+   
+   ADCON0 = 0x00                      ' A/D Control register 0
+   ADCON0.B6 = 0                      ' Analog channel set to AN0
+   ADCON0.B5 = 0
+   ADCON0.B4 = 0
+   ADCON0.B3 = 0
+   ADCON0.B2 = 0
+   ADCON0.ADON = 1                    ' Enable ADC
+   
+   ADCON1 = 0x00                      ' A/D Control register 1
+   ADCON1.PVCFG1 = 0                  ' Vref+ connected to AVdd
+   ADCON1.PVCFG0 = 0
+   ADCON1.NVCFG1 = 0                  ' Vref- connected to AVss
+   ADCON1.NVCFG0 = 0
+   
+   ADCON2 = 0x00                      ' A/D Control register 2
+   ADCON2.ADFM = 0                    ' Results format 0 = Left alignement
+   ADCON2.ACQT2 = 1                   ' Acquisition time = 8 TAD
+   ADCON2.ACQT1 = 0
+   ADCON2.ACQT0 = 0
+   ADCON2.ADCS2 = 0                   ' Conversion clock = Frc
+   ADCON2.ADCS1 = 1
+   ADCON2.ADCS0 = 1
+   
+   CM1CON0.7=0                                   ' comparateurs arrétés
+   CM2CON0.7=0                                   ' comparateurs arrétés
+#ENDIF
+
 
    ' Configure l'interruption sur Timer0
    INTCON.TMR0IE=0                      'Desactive l'interruption sur timer0 (elle est activee plus tard)
@@ -241,14 +336,15 @@ main:
    VOLTAGE= ADC_PRECISION/2               ' START with a 0V VOLTAGE
 
    ' Fait clignoter la LED de status
-   LED_STATUS = 1
-   delay_ms(50)
-   LED_STATUS = 0
-   delay_ms(50)
-   LED_STATUS = 1
-   delay_ms(50)
-   LED_STATUS = 0
-   delay_ms(200)
+   for i=1 to 5
+     LED_A = 1                                     ' Led en vert
+     LED_C = 0
+     delay_ms(150)
+     LED_A = 0                                     ' Led en rouge
+     LED_C = 1
+     delay_ms(150)
+  next i
+  LED_C = 0
 
    ' La valeur de tension de commande est récupérée de manière asynchrone
    ' par l'association du timer0 et de la mesure ADC en interruption.
@@ -270,7 +366,7 @@ main:
         ' AM____----
         ' BP__----__
         ' BM--____--
-        LATB=%00101001
+        LATB=%00110001
         asm
         MOVF _C2,0
         MOVWF _cmpt2
@@ -285,7 +381,7 @@ main:
         end asm
 
         if POSITION_COUNTER = 0 then
-           LATB=%00010101
+           LATB=%00 010101
         else
             LATB=%00100101
         end if
