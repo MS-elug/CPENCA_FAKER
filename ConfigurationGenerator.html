@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<!--
+Created using JS Bin
+http://jsbin.com
+
+Copyright (c) 2018 by MS-elug (http://jsbin.com/jasazaf/18/edit)
+
+Released under the MIT license: http://jsbin.mit-license.org
+-->
+<meta name="robots" content="noindex">
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width">
+  <title>JS Bin</title>
+  <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.1.1/css/bootstrap.min.css" integrity="sha384-WskhaSGFgHYWDcbwN70/dfYBj47jz9qbsMId/iRN3ewGhXQFZCSftd1LZCfmhktB" crossorigin="anonymous">
+<style id="jsbin-css">
+pre{
+  display:block;
+  word-break: break-all;
+}
+</style>
+</head>
+<body>
+  <form style="margin-left:15px">
+  <div class="form-group">
+    <label for="freq">Frequence PIC (hz)</label>
+    <input type="email" class="form-control" id="freq" placeholder="" value="64000000">
+  </div>
+  <div class="form-group">
+    <label for="rpmMax">RPM Max à 10V</label>
+    <input type="text" class="form-control" id="rpmMax" placeholder="" value="3000">
+  </div>
+  <div class="form-group">
+    <label for="cprEncoder">CPR encodeur (nombre de pulse par tour)</label>
+    <input type="text" class="form-control" id="cprEncoder" placeholder="" value="4000">
+  </div>
+    
+  <button type="button" class="btn btn-primary" id="generateBtn">Generer le code</button>
+</form>
+  
+  <div class="card" style="margin:15px">
+    <div class="card-body" >
+        <pre id="codeGenerated">'Code généré</pre>
+    </div>
+  </div>
+<script id="jsbin-javascript">
+var generateBtn = document.getElementById('generateBtn');
+generateBtn.onclick = function() {
+    generateCode();
+};
+
+function generateCode() {
+  //Clean previous generation
+  document.getElementById('codeGenerated').innerHTML="";
+  
+    /* Version with ASM cycle
+     *  Tempo à 2 boucles : T = 4 C2   +   3 C2 C1   +   1
+     */
+    var asmLoop = `	 	 
+'' ASM loop: T=4*C2+3*C2*C1+1
+' 	movw C2
+'    movwf cmpt2
+'
+'boucle2	 	 	 
+' 	movw C1
+'    movwf cmpt1
+'boucle1	 	 	 
+' 	decfsz cmpt1,f
+'    goto boucle1
+' 	decfsz cmpt2,f
+'    goto boucle2
+`;
+
+    /*var configList = [{
+        freq: 64000000,
+        rpmMax: 3000,
+        cpr: 4000,
+        adcPrecision: 9
+    }]*/
+    var config = {
+        freq: document.getElementById('freq').value,
+        rpmMax: document.getElementById('rpmMax').value,
+        cpr: document.getElementById('cprEncoder').value,
+        adcPrecision: 9
+    };
+    
+    /**
+     * config:{
+     *  freq: number // crystal frequency
+     *  cpr: number // Count per tour
+     *  omegaMax: numeber // vitesse max moteur a 10V
+     *  adcPrecision: number //precision du convertisseur
+     * }
+     */
+
+  var output = [];
+  output.push(`'********************************************************`);
+  var FCY = 4 / config.freq;
+  var Kv = config.rpmMax / 10; // HRS115A6-130S: Vit. Max (300V <=> 10V CPENCA) : 2300 rpm
+
+  // Pour une tension V on a Kv*V*CPR pulse/min | Kv*V*CPR/60 pulse/s
+  var V = 1;
+  var ADC_VMAX = 5;
+  var ADC_VMin = -5;
+  var ADC_VINC = (ADC_VMAX - ADC_VMin) / (Math.pow(2, config.adcPrecision) / 2 - 1);
+
+
+  output.push(`'--- Config---`);
+  output.push(`' freq=${config.freq}hz`);
+  output.push(`' cpr=${config.cpr}pulse/tr`);
+  output.push(`' Kv=${Kv}rpm/V`);
+  output.push(`' adcPrecision=${config.adcPrecision}`);
+  output.push(`'--- Info  ---`);
+  output.push(`' 1 cycle = ${FCY*Math.pow(10,9)} ns`);
+  //output.push(`' ${V}V = ${parseInt(Kv*V)} tr/min`);
+  output.push(`' ${V}V = ${parseInt(Kv*V*config.cpr/60)} pulse/s`);
+  //output.push(`' ${V}V = ${parseInt(Kv*V*config.cpr/(60/FCY))} pulse/cycle`);
+  output.push(`' ${V}V = ${parseInt(1/(Kv*V*config.cpr/(60/FCY)))} cycle/pulse`);
+  //output.push(`'ADC config: ${ADC_VINC}V/Unit`);
+
+  output.push(`\n`);
+  output.push(`'--- Code généré---`);
+
+  var mappingCounters = {};
+  for (var C1 = 0; C1 < 256; C1++) {
+    for (var C2 = 0; C2 < 256; C2++) {
+      var T = 4 * C2 + 3 * C2 * C1 + 1;
+      mappingCounters[T] = [C1, C2]
+    }
+  }
+
+  var ACTION_MAPPING = []; // 0x00 = STOP encodeur, 0x01 = CLock rotation, 0x02 = anticlockrotation
+  var C1_MAPPING = [];
+  var C2_MAPPING = [];
+  var T = [];
+  for (var i = 0; i < Math.pow(2, config.adcPrecision); i++) {
+    if (i >= (Math.pow(2, config.adcPrecision) / 2 - 1) && i <= (Math.pow(2, config.adcPrecision) / 2 + 1)) {
+      ACTION_MAPPING.push(0x00);
+      C1_MAPPING.push(0x00);
+      C2_MAPPING.push(0x00);
+    } else {
+      var Vi = (Math.pow(2, config.adcPrecision) / 2 - i) * ADC_VINC;
+      if (Vi < 0) {
+        ACTION_MAPPING.push(0x02);
+      } else {
+        ACTION_MAPPING.push(0x01);
+      }
+      var pulsePeriodInCycle = 1 / (Kv * Math.abs(Vi) * config.cpr / (60 / FCY));
+      var nbrCylcleByQuarter = parseInt(pulsePeriodInCycle / 4);
+      var mappedCounters = mappingCounters[nbrCylcleByQuarter];
+      if (!mappedCounters || mappedCounters[0] == 0 || mappedCounters[1] == 0) { //Don't allow 0value because decfsz(0x00) = 0xff
+        console.warn(`No counter for nbrCylcleByQuarter=${nbrCylcleByQuarter} - Try with ${nbrCylcleByQuarter-1}`);
+        mappedCounters = mappingCounters[nbrCylcleByQuarter - 1];
+      }
+      if (!mappedCounters || mappedCounters[0] == 0 || mappedCounters[1] == 0) {
+        console.warn(`No counter for nbrCylcleByQuarter=${nbrCylcleByQuarter-1} - Try with ${nbrCylcleByQuarter-2}`);
+        mappedCounters = mappingCounters[nbrCylcleByQuarter - 2];
+      }
+      if (!mappedCounters || mappedCounters[0] == 0 || mappedCounters[1] == 0) {
+        console.warn(`No counter for nbrCylcleByQuarter=${nbrCylcleByQuarter-2} - Try with ${nbrCylcleByQuarter-3}`);
+        mappedCounters = mappingCounters[nbrCylcleByQuarter - 3];
+      }
+      if (!mappedCounters) {
+        throw new Error(`ERROR - No counter for nbrCylcleByQuarter=${nbrCylcleByQuarter}`)
+      }
+      C1_MAPPING.push(mappedCounters[0]);
+      C2_MAPPING.push(mappedCounters[1]);
+      T.push(4 * mappedCounters[1] + 3 * mappedCounters[1] * mappedCounters[0] + 1);
+
+    }
+  }
+
+  output.push(`const ADC_PRECISION as ${config.adcPrecision>8?'word':'byte'} = ${Math.pow(2,config.adcPrecision)-1}`);
+  output.push(`' ENCODER CPR = nbr de pulse par tour d'encoder`);
+  output.push(`const ENCODER_CPR as word = ${config.cpr}`);
+  output.push(`' C1_MAPPING = nbr de cycle necessaire pour un quart de pulse`);
+  output.push(`const C1_MAPPING as byte[${C1_MAPPING.length}] = (${C1_MAPPING.join(',')})`);
+  output.push(`const C2_MAPPING as byte[${C2_MAPPING.length}] = (${C2_MAPPING.join(',')})`);
+  output.push(`const ACTION_MAPPING as byte[${ACTION_MAPPING.length}] = (${ACTION_MAPPING.join(',')})`);
+
+  output.push(`\n`)
+  output.push(`'C1 et C2 sont utilise pour la boucle assembleur suivante:${asmLoop}`)
+
+
+  //output.push(`const T as byte[${T.length}] = (${T.join(',')})`);
+  document.getElementById('codeGenerated').innerHTML = output.join("\n");
+}
+</script>
+</body>
+</html>
