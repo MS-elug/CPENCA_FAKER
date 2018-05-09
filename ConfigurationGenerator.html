@@ -135,7 +135,7 @@ function generateCode() {
   var C2_MAPPING = [];
   var T = [];
   for (var i = 0; i < Math.pow(2, config.adcPrecision); i++) {
-    if (i >= (Math.pow(2, config.adcPrecision) / 2 - 1) && i <= (Math.pow(2, config.adcPrecision) / 2 + 1)) {
+    if (i >= (Math.pow(2, config.adcPrecision) / 2 - 3) && i <= (Math.pow(2, config.adcPrecision) / 2 + 2)) {
       ACTION_MAPPING.push(0x00);
       C1_MAPPING.push(0x00);
       C2_MAPPING.push(0x00);
@@ -185,6 +185,7 @@ function generateCode() {
 
   //output.push(`const T as byte[${T.length}] = (${T.join(',')})`);
   document.getElementById('codeGenerated').innerHTML = output.join("\n");
+}
 }
 </script>
 </body>
